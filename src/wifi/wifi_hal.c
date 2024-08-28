@@ -13746,6 +13746,10 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
         else if (security->encr == wifi_encryption_aes_tkip)
             params.value = "TKIP CCMP";
         wifi_hostapdWrite(config_file, &params, 1);
+
+        /* rsn_pairwise need to be updated too */
+        params.name = "rsn_pairwise";
+        wifi_hostapdWrite(config_file, &params, 1);
     }
 
     if (security->mfp == wifi_mfp_cfg_disabled)
@@ -13804,6 +13808,7 @@ INT wifi_getApSecurity(INT ap_index, wifi_vap_security_t *security)
     char config_file[128] = {0};
     int disable = 0;
     bool set_sae = FALSE;
+    wifi_encryption_method_t wpa_pairwise = 0, rsn_pairwise = 0;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, ap_index);
@@ -13832,16 +13837,30 @@ INT wifi_getApSecurity(INT ap_index, wifi_vap_security_t *security)
             security->mode = wifi_security_mode_enhanced_open;
     }
 
-    wifi_hostapdRead(config_file,"wpa_pairwise",buf,sizeof(buf));
     if (security->mode == wifi_security_mode_none)
         security->encr = wifi_encryption_none;
     else {
-        if (strcmp(buf, "TKIP") == 0)
-            security->encr = wifi_encryption_tkip;
-        else if (strcmp(buf, "CCMP") == 0)
-            security->encr = wifi_encryption_aes;
-        else
-            security->encr = wifi_encryption_aes_tkip;
+        wifi_hostapdRead(config_file,"wpa_pairwise",buf,sizeof(buf));
+        if (strlen(buf) > 0) {
+            if (strcmp(buf, "TKIP") == 0)
+                wpa_pairwise = wifi_encryption_tkip;
+            else if (strcmp(buf, "CCMP") == 0)
+                wpa_pairwise = wifi_encryption_aes;
+            else
+                wpa_pairwise = wifi_encryption_aes_tkip;
+        }
+
+        wifi_hostapdRead(config_file,"rsn_pairwise",buf,sizeof(buf));
+        if (strlen(buf) > 0) {
+            if (strcmp(buf, "TKIP") == 0)
+                rsn_pairwise = wifi_encryption_tkip;
+            else if (strcmp(buf, "CCMP") == 0)
+                rsn_pairwise = wifi_encryption_aes;
+            else
+                rsn_pairwise = wifi_encryption_aes_tkip;
+        }
+
+        security->encr = wpa_pairwise | rsn_pairwise;
     }
 
     if (security->mode != wifi_encryption_none) {
