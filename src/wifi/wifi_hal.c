@@ -9126,6 +9126,142 @@ static int util_radio_get_hw_mode(int radioIndex, char *hw_mode, int hw_mode_siz
     return ret;
 }
 
+struct wifi_hal_freq_params {
+	/**
+	 * freq - Primary channel center frequency in MHz
+	 */
+	int freq;
+
+	/**
+	 * channel - Channel number
+	 */
+	int channel;
+
+	/**
+	 * sec_channel_offset - Secondary channel offset for HT40
+	 *
+	 * 0 = HT40 disabled,
+	 * -1 = HT40 enabled, secondary channel below primary,
+	 * 1 = HT40 enabled, secondary channel above primary
+	 */
+	int sec_channel_offset;
+
+	/**
+	 * center_freq1 - Segment 0 center frequency in MHz
+	 *
+	 * Valid for both HT and VHT.
+	 */
+	int center_freq1;
+
+	/**
+	 * center_freq2 - Segment 1 center frequency in MHz
+	 *
+	 * Non-zero only for bandwidth 80 and an 80+80 channel
+	 */
+	int center_freq2;
+
+	/**
+	 * bandwidth - Channel bandwidth in MHz (20, 40, 80, 160)
+	 */
+	int bandwidth;
+};
+
+static int util_check_freq_params(struct wifi_hal_freq_params *params)
+{
+   fprintf(stdout, "chanswitch: bandwidth %d freq %d center_freq1 %d"
+           " center_freq2 %d sec_channel_offset %d\n",
+           params->bandwidth,
+           params->freq,
+           params->center_freq1,
+           params->center_freq2,
+           params->sec_channel_offset);
+
+	switch (params->bandwidth) {
+	case 0:
+		/* bandwidth not specified: use 20 MHz by default */
+		/* fall-through */
+	case 20:
+		if (params->center_freq1 &&
+		    params->center_freq1 != params->freq)
+			return -1;
+
+		if (params->center_freq2 || params->sec_channel_offset)
+			return -1;
+		break;
+	case 40:
+		if (params->center_freq2 || !params->sec_channel_offset)
+			return -1;
+
+		if (!params->center_freq1)
+			break;
+		switch (params->sec_channel_offset) {
+		case 1:
+			if (params->freq + 10 != params->center_freq1)
+				return -1;
+			break;
+		case -1:
+			if (params->freq - 10 != params->center_freq1)
+				return -1;
+			break;
+		default:
+			return -1;
+		}
+		break;
+	case 80:
+		if (!params->center_freq1 || !params->sec_channel_offset)
+			return 1;
+
+		switch (params->sec_channel_offset) {
+		case 1:
+			if (params->freq - 10 != params->center_freq1 &&
+			    params->freq + 30 != params->center_freq1)
+				return 1;
+			break;
+		case -1:
+			if (params->freq + 10 != params->center_freq1 &&
+			    params->freq - 30 != params->center_freq1)
+				return -1;
+			break;
+		default:
+			return -1;
+		}
+
+		/* Adjacent and overlapped are not allowed for 80+80 */
+		if (params->center_freq2 &&
+		    params->center_freq1 - params->center_freq2 <= 80 &&
+		    params->center_freq2 - params->center_freq1 <= 80)
+			return 1;
+		break;
+	case 160:
+		if (!params->center_freq1 || params->center_freq2 ||
+		    !params->sec_channel_offset)
+			return -1;
+
+		switch (params->sec_channel_offset) {
+		case 1:
+			if (params->freq + 70 != params->center_freq1 &&
+			    params->freq + 30 != params->center_freq1 &&
+			    params->freq - 10 != params->center_freq1 &&
+			    params->freq - 50 != params->center_freq1)
+				return -1;
+			break;
+		case -1:
+			if (params->freq + 50 != params->center_freq1 &&
+			    params->freq + 10 != params->center_freq1 &&
+			    params->freq - 30 != params->center_freq1 &&
+			    params->freq - 70 != params->center_freq1)
+				return -1;
+			break;
+		default:
+			return -1;
+		}
+		break;
+	default:
+		return -1;
+	}
+
+	return 0;
+}
 INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz, UINT csa_beacon_count)
 {
     // Sample commands:
@@ -9150,6 +9286,7 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
     wifi_band band = band_invalid;
     int center_chan = 0;
     int center_freq1 = 0;
+    struct wifi_hal_freq_params params = {0};
 
     snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
 
@@ -9214,13 +9351,29 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
         if (sec_chan_offset != -EINVAL)
             snprintf(sec_chan_offset_str, sizeof(sec_chan_offset_str), "sec_channel_offset=%d", sec_chan_offset);
 
+        params.channel = channel;
+        params.freq = freq;
+        params.bandwidth = width;
+        params.center_freq1 = center_freq1;
+        if (sec_chan_offset != -EINVAL)
+            params.sec_channel_offset = sec_chan_offset;
+
+        /* add channel parameter check to avoid error channel setting write to hostapd conf file */
+        if (util_check_freq_params(&params)) {
+            fprintf(stderr, "util_check_freq_params: return fail\n");
+            return RETURN_ERR;
+        }
+
+
         // Only the first AP, other are hanging on the same radio
         int apIndex = radioIndex;
         snprintf(cmd, sizeof(cmd), "hostapd_cli  -i %s chan_switch %d %d %s %s %s",
             interface_name, csa_beacon_count, freq,
             sec_chan_offset_str, center_freq1_str, opt_chan_info_str);
-        wifi_dbg_printf("execute: '%s'\n", cmd);
+
         ret = _syscmd(cmd, buf, sizeof(buf));
+        fprintf(stdout, "execute: '%s' return %s\n", cmd, buf);
+
         wifi_reloadAp(radioIndex);
 
         ret = wifi_setRadioChannel(radioIndex, channel);
