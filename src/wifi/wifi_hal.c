@@ -12901,7 +12901,7 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
     }
 
     if (operationParam->band == WIFI_FREQUENCY_6_BAND) {
-        if (wifi_getRadioOpclass(index, &operationParam->op_class) != RETURN_OK) {
+        if (wifi_getRadioOpclass(index, &operationParam->operatingClass) != RETURN_OK) {
             fprintf(stderr, "%s: op_class is not set.\n", __func__);
             return RETURN_ERR;
         }
