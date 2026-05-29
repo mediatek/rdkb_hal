@@ -1,39 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
- * If not stated otherwise in this file or this component's LICENSE file the
- * following copyright and licenses apply:
- *
- * Copyright 2019 RDK Management
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
-*/
-
-/*
-* Material from the TR181 data model is Copyright (c) 2010-2017, Broadband Forum
-* Licensed under the BSD-3 license
-*/
-
-/*
-* This file includes material that is Copyright (c) 2020, Plume Design Inc.
-* Licensed under the BSD-3 license
-*/
-
-/* Code in rxStatsInfo_callback and other callbacks is credited as follows:
-Copyright (c) 2007, 2008    Johannes Berg
-Copyright (c) 2007        Andy Lutomirski
-Copyright (c) 2007        Mike Kershaw
-Copyright (c) 2008-2009        Luis R. Rodriguez
-Licensed under the ISC license
-*/
+ * Copyright (C) 2023 MediaTek Inc.
+ */
 #define MTK_IMPL
 #define HAL_NETLINK_IMPL
 #define _GNU_SOURCE /* needed for strcasestr */
