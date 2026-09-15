@@ -60,16 +60,19 @@ static INT dhcpv4c_sysevent_get_value(char *query_name, char *query_value, unsig
 		{
 			return STATUS_FAILURE;
 		}
-		if (fgets(inf, sizeof(inf), fp) != NULL)
+		if (fgets(inf, sizeof(inf), fp) == NULL || strlen(inf) == 0)
 		{
-			if(strlen(inf) == 0){
-				HAL_DHCPV4C_ERT_DBG((stderr, "%s %d syseventError %d\n", __FUNCTION__, __LINE__, STATUS_FAILURE));
-				pclose(fp);
-				return STATUS_FAILURE;
-			}
-		}	
+			HAL_DHCPV4C_ERT_DBG((stderr, "%s %d syseventError %d\n", __FUNCTION__, __LINE__, STATUS_FAILURE));
+			pclose(fp);
+			return STATUS_FAILURE;
+		}
 		pclose(fp);
-		strncpy(ert_ifname, inf, strlen(inf)-1);
+		/* strip trailing newline safely */
+		inf[strcspn(inf, "\n")] = '\0';
+		if (strlen(inf) == 0)
+			return STATUS_FAILURE;
+		snprintf(ert_ifname, sizeof(ert_ifname), "%s", inf);
+
 		snprintf(name, sizeof(name), query_name, ert_ifname);
 		snprintf(command, 128, "sysevent get %s", name);
 		fp = popen(command, "r");
@@ -77,17 +80,16 @@ static INT dhcpv4c_sysevent_get_value(char *query_name, char *query_value, unsig
 		{
 			return STATUS_FAILURE;
 		}
-
-		if (fgets(query, query_value_size, fp) != NULL)
+		if (fgets(query, query_value_size, fp) == NULL || strlen(query) == 0)
 		{
-			if(strlen(query) == 0){
-				HAL_DHCPV4C_ERT_DBG((stderr, "%s %d syseventError %d\n", __FUNCTION__, __LINE__, STATUS_FAILURE));
-				pclose(fp);
-				return STATUS_FAILURE;
-			}
+			HAL_DHCPV4C_ERT_DBG((stderr, "%s %d syseventError %d\n", __FUNCTION__, __LINE__, STATUS_FAILURE));
+			pclose(fp);
+			return STATUS_FAILURE;
 		}
 		pclose(fp);
-		strncpy(query_value, query, strlen(query)-1);
+		/* strip trailing newline and copy safely */
+		query[strcspn(query, "\n")] = '\0';
+		snprintf(query_value, query_value_size, "%s", query);
 	}
 	return STATUS_SUCCESS;
 }
@@ -119,7 +121,9 @@ static int dhcpv4c_get_up_time(unsigned int *up_time)
     }
 
     /* Extracting the first token (number of up-time in seconds). */
-    ret_val = strtok (line," .");
+    ret_val = strtok(line, " .");
+    if (ret_val == NULL)
+        return -1;
 
     /* we need only the number of seconds */
     upTime += atoi(ret_val);
@@ -180,7 +184,8 @@ INT dhcpv4c_get_ert_remain_lease_time_udhcp(UINT *pValue)
 
 		dhcpv4c_get_up_time(&up_time);
 
-		remain_lease_time = lease_time - (up_time - start_time);
+		unsigned elapsed = (up_time > start_time) ? (up_time - start_time) : 0;
+		remain_lease_time = (lease_time > elapsed) ? (lease_time - elapsed) : 0;
 
 		*pValue = remain_lease_time;
 	}
@@ -219,7 +224,8 @@ INT dhcpv4c_get_ert_remain_renew_time_udhcp(UINT *pValue)
 
 		dhcpv4c_get_up_time(&up_time);
 
-		remain_renew_time = renew_time - (up_time - start_time);
+		unsigned elapsed = (up_time > start_time) ? (up_time - start_time) : 0;
+		remain_renew_time = (renew_time > elapsed) ? (renew_time - elapsed) : 0;
 
 		*pValue = remain_renew_time;
 	}
@@ -257,7 +263,8 @@ INT dhcpv4c_get_ert_remain_rebind_time_udhcp(UINT *pValue)
 
 		dhcpv4c_get_up_time(&up_time);
 
-		remain_bind_time = rebind_time - (up_time - start_time);
+		unsigned elapsed = (up_time > start_time) ? (up_time - start_time) : 0;
+		remain_bind_time = (rebind_time > elapsed) ? (rebind_time - elapsed) : 0;
 
 		*pValue = remain_bind_time;
 	}
@@ -294,16 +301,16 @@ INT dhcpv4c_get_ert_ifname_udhcp(CHAR *pName)
 		{
 			return STATUS_FAILURE;
 		}
-		if (fgets(ert_ifname, sizeof(ert_ifname), fp) != NULL)
+		if (fgets(ert_ifname, sizeof(ert_ifname), fp) == NULL || strlen(ert_ifname) == 0)
 		{
-			if(strlen(ert_ifname) == 0){
-				HAL_DHCPV4C_ERT_DBG((stderr, "%s %d syseventError %d\n", __FUNCTION__, __LINE__, STATUS_FAILURE));
-				pclose(fp);
-				return STATUS_FAILURE;
-			}
-		}	
+			HAL_DHCPV4C_ERT_DBG((stderr, "%s %d syseventError %d\n", __FUNCTION__, __LINE__, STATUS_FAILURE));
+			pclose(fp);
+			return STATUS_FAILURE;
+		}
 		pclose(fp);
-		strncpy(pName, ert_ifname, strlen(ert_ifname)-1);
+		/* strip trailing newline and copy safely; pName is 64 bytes per HAL spec */
+		ert_ifname[strcspn(ert_ifname, "\n")] = '\0';
+		snprintf(pName, 64, "%s", ert_ifname);
 	}
 	return STATUS_SUCCESS;
 }
