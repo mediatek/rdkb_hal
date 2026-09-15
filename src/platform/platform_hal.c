@@ -154,7 +154,8 @@ INT platform_hal_GetBaseMacAddress(CHAR *pValue)
 			{
 				*end = '\0';
 			}
-			strcpy(pValue, buf);
+			/* MAC address is at most 17 chars + NUL; 18 bytes is sufficient */
+			snprintf(pValue, 18, "%s", buf);
 			return RETURN_OK;
 		}
 	}
@@ -297,13 +298,11 @@ INT platform_hal_GetModelName(CHAR* pValue)
 		return RETURN_ERR;
 	}
 
-	if(fgets(buf,sizeof(buf) -1,fp) != NULL)
+	if(fgets(buf, sizeof(buf) - 1, fp) != NULL)
 	{
-		for(count=0;buf[count]!='\n';count++) {
-			pValue[count]=buf[count];
-			if (count == sizeof(buf)-1) break;
-		}
-		pValue[count]='\0';
+		/* strip trailing newline and copy safely */
+		buf[strcspn(buf, "\n")] = '\0';
+		snprintf(pValue, sizeof(buf), "%s", buf);
 	}
 
 	pclose(fp);
@@ -332,7 +331,8 @@ INT platform_hal_GetSoftwareVersion(CHAR* pValue, ULONG maxSize)
 		if(strstr(buff, "VERSION") != NULL && strstr(buff, "YOCTO_VERSION") == NULL)
 		{
 			int i = 0;
-			while((i < sizeof(buff)-8) && (buff[i+8] != '\n') && (buff[i+8] != '\r') && (buff[i+8] != '\0'))
+			while((i < (int)(sizeof(buff)-8)) && (i < (int)(maxSize)-1) &&
+			      (buff[i+8] != '\n') && (buff[i+8] != '\r') && (buff[i+8] != '\0'))
 			{
 				pValue[i] = buff[i+8];
 				i++;
@@ -344,8 +344,8 @@ INT platform_hal_GetSoftwareVersion(CHAR* pValue, ULONG maxSize)
 
 	if(fp)
 		fclose(fp);
-	
-	return RETURN_OK; 
+
+	return RETURN_OK;
 }
 
 INT platform_hal_GetFirmwareName(CHAR* pValue, ULONG maxSize)
@@ -369,7 +369,8 @@ INT platform_hal_GetFirmwareName(CHAR* pValue, ULONG maxSize)
 		if(strstr(buff, "imagename") != NULL)
 		{
 			int i = 0;
-			while((i < sizeof(buff)-10) && (buff[i+10] != '\n') && (buff[i+10] != '\r') && (buff[i+10] != '\0'))
+			while((i < (int)(sizeof(buff)-10)) && (i < (int)(maxSize)-1) &&
+			      (buff[i+10] != '\n') && (buff[i+10] != '\r') && (buff[i+10] != '\0'))
 			{
 				pValue[i] = buff[i+10];
 				i++;
@@ -381,92 +382,73 @@ INT platform_hal_GetFirmwareName(CHAR* pValue, ULONG maxSize)
 
 	if(fp)
 		fclose(fp);
-	
-	return RETURN_OK; 
+
+	return RETURN_OK;
 }
-INT platform_hal_GetTotalMemorySize(ULONG *pulSize) 
-{ 
+INT platform_hal_GetTotalMemorySize(ULONG *pulSize)
+{
     char buf[64] = {0};
-    char cmd[64] = {0};
     FILE *fp = NULL;
 
-    sprintf(cmd, "awk '/MemTotal/ {print $2}' /proc/meminfo > /tmp/total_Mem");    
-    system(cmd);
+    if (pulSize == NULL)
+        return RETURN_ERR;
 
-    fp = fopen("/tmp/total_Mem", "r");
+    fp = popen("awk '/MemTotal/ {print $2}' /proc/meminfo", "r");
     if(fp != NULL)
     {
-        fgets(buf,sizeof(buf),fp);    
-        fclose(fp);
-        *pulSize = atoi(buf)/1024;
+        if (fgets(buf, sizeof(buf), fp) != NULL)
+            *pulSize = strtoul(buf, NULL, 10) / 1024;
+        else
+            *pulSize = 0;
+        pclose(fp);
     }else{
         *pulSize = 0;
     }
-     return RETURN_OK; 
+    return RETURN_OK;
 }
 
 INT platform_hal_GetHardware_MemUsed(CHAR *pValue)
 {
+    char buf[64] = {0};
+    FILE *fp = NULL;
+
     if (pValue == NULL)
-    {
         return RETURN_ERR;
-    }
-    else
+
+    fp = popen("df | awk '/ubi0/ {print $3}'", "r");
+    if(fp != NULL)
     {
-        char buf[64] = {0};
-        char cmd[64] = {0};
-        FILE *fp = NULL;
-
-        sprintf(cmd, "df > /tmp/flash_info");    
-        system(cmd);
-        sprintf(cmd, "awk '/ubi0/ {print $3}' /tmp/flash_info > /tmp/flash_used");
-        system(cmd);
-        unlink("/tmp/flash_info");
-
-        fp = fopen("/tmp/flash_used", "r");
-        if(fp != NULL)
-        {
-            fgets(buf,sizeof(buf),fp);    
-            fclose(fp);
-            unlink("/tmp/flash_used");
-            sprintf(pValue,"%d",(atoi(buf)/1024));
-        }else{
-            *pValue = '0';
-        }
-        return RETURN_OK;
+        if (fgets(buf, sizeof(buf), fp) != NULL)
+            snprintf(pValue, 32, "%ld", strtol(buf, NULL, 10) / 1024);
+        else
+            snprintf(pValue, 32, "0");
+        pclose(fp);
+    }else{
+        snprintf(pValue, 32, "0");
     }
+    return RETURN_OK;
 }
 
 INT platform_hal_GetHardware_MemFree(CHAR *pValue)
 {
+    char buf[64] = {0};
+    FILE *fp = NULL;
+
     if (pValue == NULL)
-    {   
         return RETURN_ERR;
-    }
-    else
+
+    fp = popen("df | awk '/ubi0/ {print $4}'", "r");
+    if(fp != NULL)
     {
-        char buf[64] = {0};
-        char cmd[64] = {0};
-        FILE *fp = NULL;
-
-        sprintf(cmd, "df > /tmp/flash_info");    
-        system(cmd);
-        sprintf(cmd, "awk '/ubi0/ {print $4}' /tmp/flash_info > /tmp/flash_free");
-        system(cmd);
-        unlink("/tmp/flash_info");
-
-        fp = fopen("/tmp/flash_free", "r");
-        if(fp != NULL)
-        {
-            fgets(buf,sizeof(buf),fp);    
-            fclose(fp);
-            unlink("/tmp/flash_free");
-            sprintf(pValue,"%d",(atoi(buf)/1024));
-        }else{
-            *pValue = '0';
-        }
-        return RETURN_OK;
+        if (fgets(buf, sizeof(buf), fp) != NULL)
+            snprintf(pValue, 32, "%ld", strtol(buf, NULL, 10) / 1024);
+        else
+            snprintf(pValue, 32, "0");
+        pclose(fp);
+    }else{
+        snprintf(pValue, 32, "0");
     }
+    return RETURN_OK;
 }
 
 INT platform_hal_GetFreeMemorySize(ULONG *pulSize)
@@ -476,18 +458,16 @@ INT platform_hal_GetFreeMemorySize(ULONG *pulSize)
         return RETURN_ERR;
     }
     char buf[64] = {0};
-    char cmd[64] = {0};
     FILE *fp = NULL;
 
-    sprintf(cmd, "awk '/MemFree/ {print $2}' /proc/meminfo > /tmp/free_Mem");    
-    system(cmd);
-
-    fp = fopen("/tmp/free_Mem", "r");
+    fp = popen("awk '/MemFree/ {print $2}' /proc/meminfo", "r");
     if(fp != NULL)
     {
-        fgets(buf,sizeof(buf),fp);    
-        fclose(fp);
-        *pulSize = atoi(buf)/1024;
+        if (fgets(buf, sizeof(buf), fp) != NULL)
+            *pulSize = strtoul(buf, NULL, 10) / 1024;
+        else
+            *pulSize = 0;
+        pclose(fp);
     }else{
         *pulSize = 0;
     }
@@ -503,9 +483,9 @@ INT platform_hal_GetUsedMemorySize(ULONG *pulSize)
 
     unsigned long total = 0;
     unsigned long free = 0;
-    platform_hal_GetFreeMemorySize(&free);
     platform_hal_GetTotalMemorySize(&total);
-    *pulSize = (total-free);
+    platform_hal_GetFreeMemorySize(&free);
+    *pulSize = (total > free) ? (total - free) : 0;
     return RETURN_OK;
 }
 
@@ -629,6 +609,8 @@ INT platform_hal_setLed(PLEDMGMT_PARAMS pValue)
 		system(cmd);
 
 	}else{
+		if (pValue->Interval == 0)
+			return RETURN_ERR;
 		snprintf(cmd,128, "echo %d > /sys/class/pwm/pwmchip0/pwm0/period",(1000000000/pValue->Interval));
 		system(cmd);
 		memset(cmd,0,sizeof(cmd));
@@ -647,31 +629,29 @@ INT platform_hal_getLed(PLEDMGMT_PARAMS pValue)
 {
 	FILE *fp = NULL;
 	char buf[64] = {0};
-	char cmd[128] = {0};
 	int duty_cycle = 0;
-  	int period = 0;
-	
+	int period = 0;
+
 	if (pValue == NULL)
 	{
 		return RETURN_ERR;
 	}
 	pValue->LedColor = 0;
-	
-	snprintf(cmd,128, "/sys/class/pwm/pwmchip0/pwm0/duty_cycle");
-	fp = popen(cmd,"r");
+
+	fp = fopen("/sys/class/pwm/pwmchip0/pwm0/duty_cycle", "r");
 	if(fp == NULL)
 	{
 		return RETURN_ERR;
 	}
 
-	if(fgets(buf,sizeof(buf) -1,fp) != NULL)
+	if(fgets(buf, sizeof(buf) - 1, fp) != NULL)
 	{
 		duty_cycle = atoi(buf);
 	}else{
-		pclose(fp);
+		fclose(fp);
 		return RETURN_ERR;
 	}
-	pclose(fp);
+	fclose(fp);
 	
 	if(duty_cycle == 0)
 	{
@@ -681,25 +661,25 @@ INT platform_hal_getLed(PLEDMGMT_PARAMS pValue)
 	}else{
 		pValue->State = 1;
 	}
-	memset(cmd,0,sizeof(cmd));
-	snprintf(cmd,128, "/sys/class/pwm/pwmchip0/pwm0/period");
-	fp = popen(cmd,"r");
+	fp = fopen("/sys/class/pwm/pwmchip0/pwm0/period", "r");
 	if(fp == NULL)
 	{
 		return RETURN_ERR;
 	}
 
-	if(fgets(buf,sizeof(buf) -1,fp) != NULL)
+	if(fgets(buf, sizeof(buf) - 1, fp) != NULL)
 	{
 		period = atoi(buf);
 	}else{
-		pclose(fp);
+		fclose(fp);
 		return RETURN_ERR;
 	}
-	pclose(fp);
-	
-	pValue->Interval  = (1000000000/period);
-	
+	fclose(fp);
+
+	if (period == 0)
+		return RETURN_ERR;
+	pValue->Interval = (1000000000 / period);
+
 	return RETURN_OK;
 
 }
@@ -799,8 +779,11 @@ INT platform_hal_GetRouterRegion(CHAR* pValue)
 		if(fgets(buf,sizeof(buf),fp) != NULL)
 		{
 			pclose(fp);
-			if (strlen(buf) > 0)
-				sprintf(pValue,"%s",buf);
+			if (strlen(buf) > 0) {
+				/* strip trailing newline before copying */
+				buf[strcspn(buf, "\n")] = '\0';
+				snprintf(pValue, sizeof(buf), "%s", buf);
+			}
 		}else{
 			pclose(fp);
 			return RETURN_ERR;
@@ -971,8 +954,16 @@ char *get_current_wan_ifname()
 		}
 	}	
 	pclose(fp);
-	memset(ifname, 0, sizeof(ifname));
-	strncpy(ifname, ert_ifname, strlen(ert_ifname)-1);
+	{
+		size_t len = strlen(ert_ifname);
+		/* strip trailing newline if present */
+		if (len > 0 && ert_ifname[len - 1] == '\n')
+			ert_ifname[--len] = '\0';
+		if (len == 0)
+			return "0";
+		memset(ifname, 0, sizeof(ifname));
+		snprintf(ifname, sizeof(ifname), "%s", ert_ifname);
+	}
 
 	return ifname;
 }
