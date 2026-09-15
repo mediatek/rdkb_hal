@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <ctype.h>
 #include <sys/ioctl.h>  /* ioctl()  */
 #include <sys/socket.h> /* socket() */
 #include <arpa/inet.h>  
@@ -24,6 +25,48 @@
 #define MAX_BUF_SIZE 1024
 #define MACADDRESS_SIZE 6
 #define LM_ARP_ENTRY_FORMAT  "%63s %63s %63s %63s %17s %63s"
+
+/* Validate a network interface name: alphanumeric, dot, hyphen, underscore only. */
+static int ethsw_is_valid_ifname(const char *s)
+{
+    size_t i, len;
+    if (!s) return 0;
+    len = strlen(s);
+    if (len == 0 || len >= 16) return 0;
+    for (i = 0; i < len; i++) {
+        char c = s[i];
+        if (!isalnum((unsigned char)c) && c != '.' && c != '-' && c != '_')
+            return 0;
+    }
+    return 1;
+}
+
+/* Validate an IP address: digits, dots, colons, brackets only. */
+static int ethsw_is_valid_ip(const char *s)
+{
+    size_t i, len;
+    if (!s) return 0;
+    len = strlen(s);
+    if (len == 0 || len > 64) return 0;
+    for (i = 0; i < len; i++) {
+        char c = s[i];
+        if (!isalnum((unsigned char)c) && c != '.' && c != ':' && c != '[' && c != ']')
+            return 0;
+    }
+    return 1;
+}
+
+/* Validate a MAC address: hex digits and colons only, XX:XX:XX:XX:XX:XX. */
+static int ethsw_is_valid_mac(const char *s)
+{
+    int i;
+    if (!s || strlen(s) != 17) return 0;
+    for (i = 0; i < 17; i++) {
+        if (i % 3 == 2) { if (s[i] != ':') return 0; }
+        else             { if (!isxdigit((unsigned char)s[i])) return 0; }
+    }
+    return 1;
+}
 
 #define ETH_WAN_INTERFACE  "erouter0"
 #define ETH_WAN_IFNAME   "eth2"
@@ -143,43 +186,35 @@ EthSwGetExtPortStatus
         *pDuplexMode    = CCSP_HAL_ETHSW_DUPLEX_Auto;
         return  RETURN_OK; 
     }
-    sprintf(cmd, "ethtool eth3 | grep -i speed > /tmp/eth3_speed");
-    system(cmd);
-    sprintf(filepath, "/tmp/eth3_speed");
-    fp = fopen(filepath, "r");
+    fp = popen("ethtool eth3 | grep -i speed", "r");
     if(fp != NULL)
     {
-        fgets(buf,sizeof(buf),fp);
-        if(strstr(buf,"Unknown") == NULL){
-            sscanf(buf,"       Speed: %dMb/s", &speed);
-        }        
-        fclose(fp);
+        while (fgets(buf, sizeof(buf), fp) != NULL) {
+            if(strstr(buf,"Unknown") == NULL)
+                sscanf(buf,"       Speed: %dMb/s", &speed);
+        }
+        pclose(fp);
     }else{
         *pLinkRate      = CCSP_HAL_ETHSW_LINK_NULL;
         *pDuplexMode    = CCSP_HAL_ETHSW_DUPLEX_Auto;
-        return  RETURN_OK;        
+        return  RETURN_OK;
     }
-    
+
     if(speed)
     {
-        memset(buf,0,sizeof(buf));
-        memset(cmd,0,sizeof(cmd));
-        memset(filepath,0,sizeof(filepath));
-        sprintf(cmd, "ethtool eth3 | grep -i duplex > /tmp/eth3_duplex");
-        system(cmd);
-        sprintf(filepath, "/tmp/eth3_duplex");
-        fp = fopen(filepath, "r");
+        memset(buf, 0, sizeof(buf));
+        fp = popen("ethtool eth3 | grep -i duplex", "r");
         if(fp != NULL)
         {
-            fgets(buf,sizeof(buf),fp);
-            if(strstr(buf,"Unknown") == NULL){
-                sscanf(buf,"        Duplex: %s", duplex);
+            while (fgets(buf, sizeof(buf), fp) != NULL) {
+                if(strstr(buf,"Unknown") == NULL)
+                    sscanf(buf,"        Duplex: %5s", duplex);
             }
-            fclose(fp);
-            if(!strcmp(duplex,"Full")) 
+            pclose(fp);
+            if(!strcmp(duplex,"Full"))
                 *pDuplexMode    = CCSP_HAL_ETHSW_DUPLEX_Full;
             else
-                *pDuplexMode    = CCSP_HAL_ETHSW_DUPLEX_Half;         
+                *pDuplexMode    = CCSP_HAL_ETHSW_DUPLEX_Half;
         }
     }
     switch (speed)
@@ -941,41 +976,35 @@ CcspHalEthSwLocatePortByMacAddress
 void GetInterfaceName(char *interface_name, char *conf_file)
 {
         FILE *fp = NULL;
-        char path[MAX_BUF_SIZE] = {0},output_string[MAX_BUF_SIZE] = {0},fname[MAX_BUF_SIZE] = {0};
-        int count = 0;
-        char *interface = NULL;
+        char line[MAX_BUF_SIZE] = {0};
+        char *val = NULL;
+        size_t val_len;
 
+        if (!interface_name || !conf_file) return;
+        interface_name[0] = '\0';
+
+        /* Read config file directly — no shell involved */
         fp = fopen(conf_file, "r");
         if(fp == NULL)
         {
                 printf("conf_file %s not exists \n", conf_file);
                 return;
         }
+
+        while (fgets(line, sizeof(line), fp)) {
+                if (strncmp(line, "interface=", 10) == 0) {
+                        val = line + 10;
+                        /* strip trailing newline */
+                        val_len = strlen(val);
+                        if (val_len > 0 && val[val_len-1] == '\n')
+                                val[--val_len] = '\0';
+                        snprintf(interface_name, 16, "%s", val);
+                        break;
+                }
+        }
         fclose(fp);
 
-        sprintf(fname,"%s%s%s","cat ",conf_file," | grep interface=");
-        fp = popen(fname,"r");
-        if(fp == NULL)
-        {
-                        printf("Failed to run command in Function %s\n",__FUNCTION__);
-                        strcpy(interface_name, "");
-                        return;
-        }
-        if(fgets(path, sizeof(path)-1, fp) != NULL)
-        {
-                        interface = strchr(path,'=');
-
-                        if(interface != NULL)
-                                strncpy(output_string, interface+1, sizeof(output_string));
-        }
-
-        for(count = 0;output_string[count]!='\n';count++)
-                        interface_name[count] = output_string[count];
-        interface_name[count]='\0';
-
-        fprintf(stderr,"Interface name %s \n", interface_name);
-
-        pclose(fp);
+        fprintf(stderr, "Interface name %s \n", interface_name);
 }
 /* CcspHalExtSw_getAssociatedDevice :  */
 /**
@@ -999,7 +1028,7 @@ INT CcspHalExtSw_getAssociatedDevice(ULONG *output_array_size, eth_device_t **ou
 	ULONG maccount = 0,eth_count = 0;
 	INT arr[MACADDRESS_SIZE] = {0};
 	UCHAR mac[MACADDRESS_SIZE] = {0};
-	CHAR ipAddr[50],stub[50],phyAddr[50],ifName[32],status[32];
+	CHAR ipAddr[64],stub[64],phyAddr[64],ifName[64],status[64];
 	int ret;
 	if(output_struct == NULL)
 	{
@@ -1012,16 +1041,20 @@ INT CcspHalExtSw_getAssociatedDevice(ULONG *output_array_size, eth_device_t **ou
 	system("cat /nvram/dnsmasq.leases | cut -d ' ' -f2 > /tmp/connected_mac.txt"); //storing the all associated device information in tmp folder
 	//storing the private wifi  associated device iformation in tmp folder
 	GetInterfaceName(interface_name,"/nvram/hostapd0.conf");
-	sprintf(buf,"iw dev %s station dump | grep Station | cut -d ' ' -f2 > /tmp/Associated_Devices.txt",interface_name);
-	system(buf);
+	if (ethsw_is_valid_ifname(interface_name)) {
+		snprintf(buf, sizeof(buf), "iw dev %s station dump | grep Station | cut -d ' ' -f2 > /tmp/Associated_Devices.txt", interface_name);
+		system(buf);
+	}
 	GetInterfaceName(interface_name,"/nvram/hostapd1.conf");
-	sprintf(buf,"iw dev %s station dump | grep Station | cut -d ' ' -f2 >> /tmp/Associated_Devices.txt",interface_name);
-	system(buf);
+	if (ethsw_is_valid_ifname(interface_name)) {
+		snprintf(buf, sizeof(buf), "iw dev %s station dump | grep Station | cut -d ' ' -f2 >> /tmp/Associated_Devices.txt", interface_name);
+		system(buf);
+	}
 
 	system("diff /tmp/Associated_Devices.txt /tmp/connected_mac.txt | grep \"^+\" | cut -c2- | sed -n '1!p' > /tmp/ethernet_connected_clients.txt"); //separating the ethernet associated device information from connected_mac test file
 	fp=popen("cat /tmp/ethernet_connected_clients.txt | wc -l","r"); // For getting the  ethernet connected mac count
 	if(fp == NULL)
-		return RETURN_ERR;
+		goto cleanup_tmp;
 	else
 	{
 		fgets(buf,MAX_BUF_SIZE,fp);
@@ -1034,7 +1067,7 @@ INT CcspHalExtSw_getAssociatedDevice(ULONG *output_array_size, eth_device_t **ou
 	if(temp == NULL)
 	{
 		fprintf(stderr,"Not enough memory \n");
-		return RETURN_ERR;
+		goto cleanup_tmp;
 	}
 	fp=fopen("/tmp/ethernet_connected_clients.txt","r"); // reading the ethernet associated device information
 	if(fp == NULL)
@@ -1042,22 +1075,25 @@ INT CcspHalExtSw_getAssociatedDevice(ULONG *output_array_size, eth_device_t **ou
 		*output_struct = NULL;
 		*output_array_size = 0;
 		free(temp);
-		return RETURN_ERR;
+		goto cleanup_tmp;
 	}
 	else
 	{
 		for(count = 0;count < maccount ; count++)
 		{
-			fgets(str,MAX_BUF_SIZE,fp);	
-			for(str_count = 0;str[str_count]!='\n';str_count++)
-				macAddr[str_count] = str[str_count];
-			macAddr[str_count] = '\0';
-			system("ip nei show | grep brlan0 > /tmp/arp_cache");
-			fp1=fopen("/tmp/arp_cache","r");
+			if (fgets(str, MAX_BUF_SIZE, fp) == NULL)
+				break;
+			{
+				size_t slen = strcspn(str, "\n");
+				if (slen >= sizeof(macAddr)) slen = sizeof(macAddr) - 1;
+				memcpy(macAddr, str, slen);
+				macAddr[slen] = '\0';
+			}
+			fp1=popen("ip nei show | grep brlan0","r");
 			if(fp1 == NULL){
 				fclose(fp);
 				free(temp);
-				return RETURN_ERR;
+				goto cleanup_tmp;
 			}
 			while(fgets(buf,sizeof(buf),fp1) != NULL)
 			{
@@ -1082,21 +1118,24 @@ Sample:
 					memset(buf,0,sizeof(buf));
 					if(strcmp(status,"REACHABLE") == 0)
 					{
-						sprintf(buf,"echo %s >> /tmp/ethernetmac.txt",macAddr);
-						system(buf);
-						eth_count++;
+						if (ethsw_is_valid_mac(macAddr)) {
+							FILE *mfp = fopen("/tmp/ethernetmac.txt", "a");
+							if (mfp) { fprintf(mfp, "%s\n", macAddr); fclose(mfp); }
+							eth_count++;
+						}
 						break;
 					}
 					else if((strcmp(status,"STALE") == 0) || (strcmp(status,"DELAY")))
 					{
-						sprintf(buf,"ping -q -c 1 -W 1  \"%s\"  > /dev/null 2>&1",ipAddr);
+						if (!ethsw_is_valid_ip(ipAddr) || !ethsw_is_valid_mac(macAddr))
+							break;
+						snprintf(buf, sizeof(buf), "ping -q -c 1 -W 1 %s > /dev/null 2>&1", ipAddr);
 						fprintf(stderr,"buf is %s and MACADRRESS %s\n",buf,macAddr);
 						if (WEXITSTATUS(system(buf)) == 0)
 						{
 							fprintf(stderr,"Inside STALE SUCCESS \n");
-							memset(buf,0,sizeof(buf));
-							sprintf(buf,"echo %s >> /tmp/ethernetmac.txt",macAddr);
-							system(buf);
+							FILE *mfp = fopen("/tmp/ethernetmac.txt", "a");
+							if (mfp) { fprintf(mfp, "%s\n", macAddr); fclose(mfp); }
 							eth_count++;
 							break;
 						}
@@ -1110,7 +1149,7 @@ Sample:
 				else
 					fprintf(stderr,"MAcAddress is not valid \n");
 			}
-			fclose(fp1);
+			pclose(fp1);
 		}
 	}
 	fclose(fp);
@@ -1194,7 +1233,12 @@ Sample:
 	*output_struct = temp;
 	*output_array_size = eth_count;
 	fprintf(stderr,"Connected Active ethernet clients count is %ld \n",*output_array_size);
-	return 	RETURN_OK;
+cleanup_tmp:
+	unlink("/tmp/ethernetmac.txt");
+	unlink("/tmp/connected_mac.txt");
+	unlink("/tmp/Associated_Devices.txt");
+	unlink("/tmp/ethernet_connected_clients.txt");
+	return RETURN_OK;
 }
 
 /* CcspHalExtSw_getEthWanEnable  */
@@ -1349,12 +1393,14 @@ void *ethsw_thread_main(void *context __attribute__((unused)))
 			if (currentLinkDeteced)
 			{
 				CcspHalEthSwTrace(("send_link_event: Got Link UP Event\n"));
-				ethWanCallbacks.pGWP_act_EthWanLinkUP();    
+				if (ethWanCallbacks.pGWP_act_EthWanLinkUP)
+					ethWanCallbacks.pGWP_act_EthWanLinkUP();
 			}
 			else
 			{
 				CcspHalEthSwTrace(("send_link_event: Got Link DOWN Event\n"));
-				ethWanCallbacks.pGWP_act_EthWanLinkDown();   
+				if (ethWanCallbacks.pGWP_act_EthWanLinkDown)
+					ethWanCallbacks.pGWP_act_EthWanLinkDown();
 			}
 			previousLinkDetected = currentLinkDeteced;
 		}
